@@ -1,0 +1,17 @@
+[
+  {
+    "distribution": "ubuntu",
+    "version": "26.04",
+    "image": "ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7"
+  },
+  {
+    "distribution": "debian",
+    "version": "13",
+    "image": "debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
+  },
+  {
+    "distribution": "fedora",
+    "version": "44",
+    "image": "fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80"
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "gcc": {
+    "version": "16.2.0",
+    "tag": "releases/gcc-16.2.0",
+    "commit": "78d4ac73dd391005b895a6148cd9831e28e1208b",
+    "url": "https://gcc.gnu.org/pub/gcc/releases/gcc-16.2.0/gcc-16.2.0.tar.xz",
+    "sha256": "e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e",
+    "signer": "7F74F97C103468EE5D750B583AB00996FC26A641",
+    "key": "keys/gcc.asc"
+  },
+  "binutils": {
+    "version": "2.47",
+    "url": "https://sourceware.org/pub/binutils/releases/binutils-2.47.tar.zst",
+    "sha256": "6b65d318b49c3b59c329ba712c3f4f0b0282269ce6dc5a2038a100aaf309059f",
+    "signer": "3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F",
+    "key": "keys/binutils.asc"
+  },
+  "build_image": "almalinux:8.10@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe",
+  "discovery": {
+    "minimum_major": 8,
+    "signers": {
+      "7F74F97C103468EE5D750B583AB00996FC26A641": "keys/gcc.asc",
+      "D3A93CAD751C2AF4F8C7AD516C35B99309B5FA62": "keys/gcc-jelinek.asc"
+    }
+  },
+  "glibc_minimum": "2.28",
+  "source_date_epoch": 1786060800,
+  "zstd_level": 9,
+  "almalinux": {
+    "version": "8.10",
+    "security_support_end": "2029-05-31"
+  }
+}

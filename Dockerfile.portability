@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG DISTRIBUTION
+ARG DISTRIBUTION_VERSION
+RUN . /etc/os-release && test "$ID" = "$DISTRIBUTION" && test "$VERSION_ID" = "$DISTRIBUTION_VERSION"
+
+# Use the consumer's signed distribution repositories for its libc headers and
+# startup objects. No distribution compiler may hide a missing packaged tool.
+RUN case "$DISTRIBUTION" in \
+      ubuntu|debian) \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+          python3 make libc6-dev linux-libc-dev zlib1g zstd tar && \
+        dpkg-query -W > /portability-packages.tsv && \
+        rm -rf /var/lib/apt/lists/* ;; \
+      fedora) \
+        dnf --assumeyes --setopt=install_weak_deps=False install \
+          python3 make glibc-devel kernel-headers zlib-ng-compat zstd tar && \
+        rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort > /portability-packages.tsv && \
+        dnf clean all ;; \
+      *) exit 1 ;; \
+    esac && ! command -v gcc && ! command -v g++
+ENTRYPOINT ["python3", "/recipe/scripts/verify.py"]

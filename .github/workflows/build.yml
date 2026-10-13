@@ -1,0 +1,351 @@
+name: GCC packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Publish missing releases, or validate without publication
+        type: choice
+        options: [publish, validate]
+        default: publish
+      versions:
+        description: Comma-separated stable versions; blank uses the mode's default
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# Serialize discovery and publication, including reruns and manual backfills.
+concurrency:
+  group: gcc-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Packaging code quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out packaging recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install hash-locked Python check tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/quality"
+          "$RUNNER_TEMP/quality/bin/pip" install --require-hashes -r requirements-dev.txt
+
+      - name: Acquire pinned workflow and shell linters
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 \
+            "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --strict
+          gh attestation verify "$RUNNER_TEMP/actionlint.tar.gz" --repo rhysd/actionlint \
+            --signer-workflow rhysd/actionlint/.github/workflows/release.yaml --source-ref refs/tags/v1.7.12
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --max-time 120 \
+            https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
+            --output "$RUNNER_TEMP/shellcheck.tar.xz"
+          printf '%s  %s\n' 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87 \
+            "$RUNNER_TEMP/shellcheck.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 \
+            shellcheck-v0.10.0/shellcheck
+
+      - name: Run the same checks as local review
+        run: |
+          make check PYTHON="$RUNNER_TEMP/quality/bin/python" \
+            ACTIONLINT="$RUNNER_TEMP/actionlint" SHELLCHECK="$RUNNER_TEMP/shellcheck"
+
+  prepare:
+    name: Select releases and freeze inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # GitHub reveals drafts only to callers with push access; this job only reads.
+      contents: write
+    outputs:
+      has_releases: ${{ steps.plan.outputs.has_releases }}
+      build: ${{ steps.plan.outputs.build }}
+      verify: ${{ steps.plan.outputs.verify }}
+
+    steps:
+      - name: Check out packaging recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Discover tags and freeze authenticated release inputs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          MODE: ${{ inputs.mode }}
+          VERSIONS: ${{ inputs.versions }}
+        shell: bash
+        run: |
+          options=(--output "$RUNNER_TEMP/release-plan")
+          if [[ "$EVENT" == pull_request || "$MODE" == validate ]]; then
+            # Validation includes published versions; blank selects build.json.
+            if [[ -z "$VERSIONS" ]]; then
+              options+=(--configured)
+            fi
+          else
+            options+=(--repository "$REPOSITORY")
+          fi
+          if [[ -n "$VERSIONS" ]]; then
+            options+=(--versions "$VERSIONS")
+          fi
+          python3 scripts/discover.py "${options[@]}" | tee "$RUNNER_TEMP/discovery.json"
+          cat "$RUNNER_TEMP/discovery.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the resolved release plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan/
+          retention-days: 30
+          if-no-files-found: error
+
+  # Compile once, then transfer only the binary to the distribution jobs.
+  # Candidate uploads are excluded from publication's download pattern.
+  build:
+    name: Build ${{ matrix.release }} / Linux ${{ matrix.arch }}
+    needs: [prepare, quality]
+    if: needs.prepare.outputs.has_releases == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out packaging recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the resolved release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+
+      - name: Build unverified candidate
+        env:
+          RELEASE: ${{ matrix.release }}
+        run: make candidate OUTPUT="$RUNNER_TEMP/packages" CONFIG="$RUNNER_TEMP/release-plan/$RELEASE.json"
+
+      - name: Upload candidate binary for distribution checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: candidate-${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}/*.tar.zst
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload corresponding source and candidate checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: inputs-${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}/*-source.tar
+            ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}/provenance.json
+            ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}/SHA256SUMS
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  # This matrix waits for all builds, then checks each archive independently.
+  # Failed builds must not skip verification of the successful candidates.
+  # Rerunning failed verification jobs reuses the successful build's uploads.
+  verify:
+    name: Verify ${{ matrix.release }} / Linux ${{ matrix.arch }} / ${{ matrix.distribution }}
+    needs: [prepare, quality, build]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' && needs.quality.result == 'success' &&
+      needs.prepare.outputs.has_releases == 'true' && needs.build.result != 'skipped'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.verify) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the same verification code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the resolved release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+
+      - name: Download the candidate binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: candidate-${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/candidate
+
+      - name: Verify relocation and compiler behavior in this distribution
+        env:
+          RELEASE: ${{ matrix.release }}
+          ARCHITECTURE: ${{ matrix.arch }}
+          DISTRIBUTION: ${{ matrix.distribution }}
+        run: |
+          make verify ARCHIVE="$RUNNER_TEMP/candidate/$RELEASE-linux-$ARCHITECTURE.tar.zst" \
+            OUTPUT="$RUNNER_TEMP/reports" CONFIG="$RUNNER_TEMP/release-plan/$RELEASE.json" \
+            DISTRIBUTION="$DISTRIBUTION"
+
+      - name: Upload successful verification report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: reports-${{ matrix.release }}-linux-${{ matrix.arch }}-${{ matrix.distribution }}
+          path: ${{ runner.temp }}/reports/
+          retention-days: 30
+          if-no-files-found: error
+
+  # Require every report for each candidate, even when another candidate fails.
+  # Only complete candidates receive attestations and publishable uploads.
+  complete:
+    name: Complete ${{ matrix.release }} / Linux ${{ matrix.arch }}
+    needs: [prepare, quality, verify]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' && needs.quality.result == 'success' &&
+      needs.prepare.outputs.has_releases == 'true' && needs.verify.result != 'skipped'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out the exact packaging commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the resolved release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+
+      - name: Download the candidate binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: candidate-${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}
+
+      - name: Download corresponding source and candidate checksums
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: inputs-${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packages/${{ matrix.release }}-linux-${{ matrix.arch }}
+
+      - name: Download every distribution report for this candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: reports-${{ matrix.release }}-linux-${{ matrix.arch }}-*
+          path: ${{ runner.temp }}/reports
+          merge-multiple: true
+
+      - name: Require complete evidence for the unchanged candidate
+        env:
+          RELEASE: ${{ matrix.release }}
+          ARCHITECTURE: ${{ matrix.arch }}
+        run: |
+          python3 scripts/finalize.py "$RUNNER_TEMP/packages/$RELEASE-linux-$ARCHITECTURE" \
+            --reports "$RUNNER_TEMP/reports" --config "$RUNNER_TEMP/release-plan/$RELEASE.json" \
+            --architecture "$ARCHITECTURE"
+
+      - name: Attest packages verified by this workflow
+        if: github.event_name != 'pull_request' && inputs.mode != 'validate' && github.ref == 'refs/heads/main'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/packages/**/*.tar.zst
+            ${{ runner.temp }}/packages/**/*-source.tar
+          create-storage-record: false
+
+      - name: Retain the attestation bundle with the packages
+        if: github.event_name != 'pull_request' && inputs.mode != 'validate' && github.ref == 'refs/heads/main'
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          RELEASE: ${{ matrix.release }}
+          ARCHITECTURE: ${{ matrix.arch }}
+        run: cp "$BUNDLE" "$RUNNER_TEMP/packages/attestation-$RELEASE-$ARCHITECTURE.jsonl"
+
+      - name: Upload verified packages and evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.release }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packages/
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+
+  # A failed version must not block other versions. Both native uploads are
+  # still required for each published release; cancellation never publishes.
+  publish:
+    name: Publish releases in version order
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && inputs.mode != 'validate' &&
+      github.ref == 'refs/heads/main' &&
+      needs.prepare.result == 'success' && needs.quality.result == 'success' &&
+      needs.prepare.outputs.has_releases == 'true' && needs.complete.result != 'skipped'
+    needs: [prepare, quality, complete]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      attestations: read
+
+    steps:
+      - name: Check out the exact packaging commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the resolved release plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+
+      - name: Download this run's verified packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: gcc-*-linux-*
+          path: ${{ runner.temp }}/packages
+          merge-multiple: true
+
+      - name: Verify attestations and publish without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Retrying this job reuses its run's artifacts and resumes matching drafts.
+        run: python3 scripts/publish.py "$RUNNER_TEMP/packages" --plan "$RUNNER_TEMP/release-plan" --available --resume

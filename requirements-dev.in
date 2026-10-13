@@ -1,0 +1,3 @@
+# Pinned review tools; requirements-dev.txt records their distribution hashes.
+ruff==0.16.10
+mypy==2.4.0

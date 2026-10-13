@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PERF", "RUF", "S"]
+# Private mkdtemp workspaces and fixed external build tools are intentional.
+ignore = ["S108", "S404", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+enable_error_code = ["exhaustive-match", "ignore-without-code", "possibly-undefined"]
