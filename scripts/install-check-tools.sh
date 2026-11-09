@@ -17,7 +17,7 @@ mkdir -p "$archive_dir" "$install_dir"
 if [[ "$cache_hit" != true ]]; then
     download https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
         "$archive_dir/actionlint.tar.gz"
-    download https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
+    download https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
         "$archive_dir/shellcheck.tar.xz"
 fi
 
@@ -32,4 +32,4 @@ fi
 
 tar -xzf "$archive_dir/actionlint.tar.gz" -C "$install_dir" actionlint
 tar -xJf "$archive_dir/shellcheck.tar.xz" -C "$install_dir" --strip-components=1 \
-    shellcheck-v0.10.0/shellcheck
+    shellcheck-v0.11.0/shellcheck

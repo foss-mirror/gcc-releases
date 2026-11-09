@@ -39,7 +39,7 @@ class CheckToolsTests(unittest.TestCase):
             install_tool(self.root, tool, "check_tools.py")
         archives: tuple[tuple[str, Literal["w:gz", "w:xz"], str, str], ...] = (
             ("actionlint.tar.gz", "w:gz", "actionlint", "ACTIONLINT_SHA256"),
-            ("shellcheck.tar.xz", "w:xz", "shellcheck-v0.10.0/shellcheck", "SHELLCHECK_SHA256"),
+            ("shellcheck.tar.xz", "w:xz", "shellcheck-v0.11.0/shellcheck", "SHELLCHECK_SHA256"),
         )
         for filename, mode, member, variable in archives:
             archive = self.upstream / filename
