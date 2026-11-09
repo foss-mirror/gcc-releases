@@ -31,6 +31,9 @@ jobs:
     name: Packaging code quality
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
     steps:
       - name: Check out packaging recipe
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -42,26 +45,26 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/quality"
           "$RUNNER_TEMP/quality/bin/pip" install --require-hashes -r requirements-dev.txt
 
-      - name: Acquire pinned workflow and shell linters
+      - name: Restore pinned linter archives
+        id: linters
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/linter-archives
+          key: linters-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ACTIONLINT_SHA256 }}-${{ env.SHELLCHECK_SHA256 }}
+
+      - name: Acquire and verify pinned workflow and shell linters
         env:
           GH_TOKEN: ${{ github.token }}
+          LINTER_CACHE_HIT: ${{ steps.linters.outputs.cache-hit }}
         shell: bash
-        run: |
-          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --max-time 120 \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            --output "$RUNNER_TEMP/actionlint.tar.gz"
-          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 \
-            "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --strict
-          gh attestation verify "$RUNNER_TEMP/actionlint.tar.gz" --repo rhysd/actionlint \
-            --signer-workflow rhysd/actionlint/.github/workflows/release.yaml --source-ref refs/tags/v1.7.12
-          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
-          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --max-time 120 \
-            https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
-            --output "$RUNNER_TEMP/shellcheck.tar.xz"
-          printf '%s  %s\n' 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87 \
-            "$RUNNER_TEMP/shellcheck.tar.xz" | sha256sum --check --strict
-          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 \
-            shellcheck-v0.10.0/shellcheck
+        run: bash scripts/install-check-tools.sh "$RUNNER_TEMP/linter-archives" "$RUNNER_TEMP"
+
+      - name: Save verified linter archives before running checks
+        if: steps.linters.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/linter-archives
+          key: ${{ steps.linters.outputs.cache-primary-key }}
 
       - name: Run the same checks as local review
         run: |

@@ -126,8 +126,11 @@ Use `make check PYTHON=/path/to/venv/bin/python` to run its linters and tests
 without activating the environment or changing `PATH`.
 `ACTIONLINT` and `SHELLCHECK` can select local tool paths. CI pins actionlint
 1.7.12 and ShellCheck 0.10.0 by SHA-256, verifies actionlint's upstream attestation,
-and uses the same Make target. ShellCheck publishes no detached signature or
-artifact attestation for that [pinned release](https://github.com/koalaman/shellcheck/releases/tag/v0.10.0)
+and uses the same Make target. CI caches the pinned archives after successful
+verification, before running the checks. Cache hits recheck both hashes without
+contacting upstream download or attestation endpoints; cache misses require fresh
+downloads and actionlint attestation verification. ShellCheck publishes no detached
+signature or artifact attestation for that [pinned release](https://github.com/koalaman/shellcheck/releases/tag/v0.10.0)
 (checked 2026-10-12); its independently pinned hash and HTTPS are the available checks.
 Regression tests install checked scripts from `tests/fixtures/` as disposable
 processes to exercise failed downloads,
